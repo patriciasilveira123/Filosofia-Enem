@@ -1,0 +1,163 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isVerifiedOwner(userId) {
+      return isVerified() && request.auth.uid == userId;
+    }
+
+    function isValidPrivateUser(data, userId) {
+      return data.keys().hasAll(['ownerId', 'email', 'displayName', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['ownerId', 'email', 'displayName', 'createdAt', 'updatedAt'])
+        && data.ownerId is string
+        && data.ownerId.size() >= 1
+        && data.ownerId.size() <= 128
+        && data.ownerId == userId
+        && data.email is string
+        && data.email.size() >= 3
+        && data.email.size() <= 254
+        && data.displayName is string
+        && data.displayName.size() <= 120
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidProgress(data, userId) {
+      return data.keys().hasAll([
+          'ownerId',
+          'answers',
+          'currentQuestionId',
+          'selectedUnit',
+          'selectedDifficulty',
+          'statusFilter',
+          'pageTheme',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId',
+          'answers',
+          'currentQuestionId',
+          'selectedUnit',
+          'selectedDifficulty',
+          'statusFilter',
+          'pageTheme',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.ownerId is string
+        && data.ownerId.size() >= 1
+        && data.ownerId.size() <= 128
+        && data.ownerId == userId
+        && data.answers is map
+        && data.answers.size() <= 500
+        && data.currentQuestionId is int
+        && data.currentQuestionId >= 1
+        && data.currentQuestionId <= 500
+        && data.selectedUnit is string
+        && data.selectedUnit.size() >= 1
+        && data.selectedUnit.size() <= 32
+        && data.selectedDifficulty is string
+        && data.selectedDifficulty.size() >= 1
+        && data.selectedDifficulty.size() <= 16
+        && data.selectedDifficulty in ['all', 'Fácil', 'Médio', 'Difícil']
+        && data.statusFilter is string
+        && data.statusFilter.size() >= 1
+        && data.statusFilter.size() <= 32
+        && data.statusFilter in ['todas', 'nao_respondidas', 'erradas']
+        && data.pageTheme is string
+        && data.pageTheme.size() >= 1
+        && data.pageTheme.size() <= 16
+        && data.pageTheme in ['claro', 'sepia', 'escuro']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /users/{userId}/private/{docId} {
+      allow get: if isValidId(userId) && isValidId(docId) && docId == 'profile' && isOwner(userId);
+      allow list: if false;
+      allow create: if isValidId(userId)
+        && isValidId(docId)
+        && docId == 'profile'
+        && isVerifiedOwner(userId)
+        && isValidPrivateUser(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(userId)
+        && isValidId(docId)
+        && docId == 'profile'
+        && isVerifiedOwner(userId)
+        && isValidPrivateUser(incoming(), userId)
+        && (
+          incoming().ownerId == existing().ownerId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['email', 'displayName', 'updatedAt'])
+        );
+      allow delete: if false;
+    }
+
+    match /users/{userId}/progress/{progressId} {
+      allow get: if isValidId(userId) && isValidId(progressId) && progressId == 'simulado' && isOwner(userId);
+      allow list: if false;
+      allow create: if isValidId(userId)
+        && isValidId(progressId)
+        && progressId == 'simulado'
+        && isVerifiedOwner(userId)
+        && isValidProgress(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(userId)
+        && isValidId(progressId)
+        && progressId == 'simulado'
+        && isVerifiedOwner(userId)
+        && isValidProgress(incoming(), userId)
+        && (
+          incoming().ownerId == existing().ownerId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'answers',
+            'currentQuestionId',
+            'selectedUnit',
+            'selectedDifficulty',
+            'statusFilter',
+            'pageTheme',
+            'updatedAt'
+          ])
+        );
+      allow delete: if isValidId(userId)
+        && isValidId(progressId)
+        && progressId == 'simulado'
+        && isVerifiedOwner(userId);
+    }
+  }
+}

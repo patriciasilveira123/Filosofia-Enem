@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
 import {
   CheckCircle2,
   ChevronLeft,
@@ -11,6 +12,11 @@ import {
   Filter,
   FileDown,
   Palette,
+  LogIn,
+  LogOut,
+  Cloud,
+  CloudOff,
+  Compass,
 } from 'lucide-react';
 import { ALL_QUESTIONS } from './data/questions';
 import { CURRICULUM } from './data/curriculum';
@@ -18,13 +24,33 @@ import { AlternativeKey, AnswersMap, Difficulty } from './types/quiz';
 import { calculateTriStats } from './utils/tri';
 import { downloadQuestionsPdf } from './utils/pdfExport';
 import { downloadQuestionsWord } from './utils/wordExport';
+import { auth } from './firebase';
+import { AuthModal } from './components/AuthModal';
+import {
+  AppAccount,
+  EMAIL_TOKEN_STORAGE_KEY,
+  EmailAccount,
+  ensurePrivateProfile,
+  findFirstUnansweredId,
+  loadAccountProgress,
+  PageTheme,
+  restoreEmailSession,
+  sanitizeProgressState,
+  saveAccountProgress,
+  SavedProgressState,
+  StatusFilter,
+} from './services/progressSync';
 
 type ViewTab = 'simulado' | 'unidades' | 'desempenho' | 'gabarito';
-type StatusFilter = 'todas' | 'nao_respondidas' | 'erradas';
-type PageTheme = 'claro' | 'sepia' | 'escuro';
+type SyncState = 'guest' | 'loading' | 'synced' | 'syncing' | 'error';
 
 const STORAGE_KEY = 'filoenem_answers_v2';
+const LAST_QUESTION_KEY = 'filoenem_last_q_v2';
 const THEME_KEY = 'filoenem_page_theme_v1';
+
+function userStorageKey(uid: string) {
+  return `filoenem_user_state_v2_${uid}`;
+}
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<ViewTab>('simulado');
@@ -40,9 +66,29 @@ export default function App() {
   const [selectedUnit, setSelectedUnit] = useState<string>('all');
   const [selectedDifficulty, setSelectedDifficulty] = useState<Difficulty | 'all'>('all');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('todas');
-  const [currentQuestionId, setCurrentQuestionId] = useState<number>(1);
+  const [currentQuestionId, setCurrentQuestionId] = useState<number>(() => {
+    try {
+      const saved = Number(localStorage.getItem(LAST_QUESTION_KEY));
+      return Number.isInteger(saved) && saved >= 1 && saved <= ALL_QUESTIONS.length ? saved : 1;
+    } catch {
+      return 1;
+    }
+  });
   const [showAllComments, setShowAllComments] = useState<boolean>(true);
   const [confirmReset, setConfirmReset] = useState<boolean>(false);
+  const [authAccount, setAuthAccount] = useState<AppAccount | null>(null);
+  const [authReady, setAuthReady] = useState<boolean>(false);
+  const [showAuthModal, setShowAuthModal] = useState<boolean>(false);
+  const [syncState, setSyncState] = useState<SyncState>('guest');
+  const [resumeBanner, setResumeBanner] = useState<string | null>(null);
+
+  const hydratedUidRef = useRef<string | null>(null);
+  const cloudDocExistsRef = useRef<boolean>(false);
+  const latestGuestRef = useRef<{ answers: AnswersMap; currentQuestionId: number }>({
+    answers,
+    currentQuestionId,
+  });
+
   const [pageTheme, setPageTheme] = useState<PageTheme>(() => {
     try {
       const saved = localStorage.getItem(THEME_KEY) as PageTheme | null;
@@ -93,13 +139,268 @@ export default function App() {
       ? 'bg-zinc-800 border-zinc-700 text-white'
       : 'bg-white border-slate-200 text-slate-900';
 
+  // Keep latest guest or authenticated local cache updated
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(answers));
-    } catch {
-      // Ignore storage quota errors
+    if (!authAccount) {
+      latestGuestRef.current = { answers, currentQuestionId };
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(answers));
+        localStorage.setItem(LAST_QUESTION_KEY, String(currentQuestionId));
+      } catch {
+        // Ignore storage quota errors
+      }
+    } else if (hydratedUidRef.current === authAccount.uid) {
+      try {
+        const snapshot: SavedProgressState = {
+          answers,
+          currentQuestionId,
+          selectedUnit,
+          selectedDifficulty,
+          statusFilter,
+          pageTheme,
+        };
+        localStorage.setItem(userStorageKey(authAccount.uid), JSON.stringify(snapshot));
+      } catch {
+        // Ignore storage quota errors
+      }
     }
-  }, [answers]);
+  }, [answers, currentQuestionId, selectedUnit, selectedDifficulty, statusFilter, pageTheme, authAccount]);
+
+  const hydrateAccount = useCallback(async (account: AppAccount) => {
+    setAuthAccount(account);
+    setAuthReady(true);
+    setSyncState('loading');
+    hydratedUidRef.current = null;
+
+    let localUserState: SavedProgressState | null = null;
+    try {
+      const rawUser = localStorage.getItem(userStorageKey(account.uid));
+      if (rawUser) {
+        localUserState = sanitizeProgressState(JSON.parse(rawUser), ALL_QUESTIONS.length);
+      }
+    } catch {
+      localUserState = null;
+    }
+
+    const guestSnap = latestGuestRef.current;
+
+    try {
+      if (account.provider === 'google' && account.firebaseUser.emailVerified) {
+        await ensurePrivateProfile(account.firebaseUser);
+      }
+      const cloudRes = await loadAccountProgress(account);
+      cloudDocExistsRef.current = cloudRes.exists;
+
+      if (cloudRes.exists && cloudRes.state) {
+        const mergedAnswers: AnswersMap = {
+          ...guestSnap.answers,
+          ...(localUserState?.answers || {}),
+          ...cloudRes.state.answers,
+        };
+        const answeredTotal = Object.keys(mergedAnswers).length;
+        const targetQ =
+          cloudRes.state.currentQuestionId > 1
+            ? cloudRes.state.currentQuestionId
+            : answeredTotal > 0
+              ? findFirstUnansweredId(mergedAnswers, ALL_QUESTIONS.length)
+              : guestSnap.currentQuestionId;
+
+        setAnswers(mergedAnswers);
+        setCurrentQuestionId(targetQ);
+        setSelectedUnit(cloudRes.state.selectedUnit);
+        setSelectedDifficulty(cloudRes.state.selectedDifficulty);
+        setStatusFilter(cloudRes.state.statusFilter);
+        setPageTheme(cloudRes.state.pageTheme);
+
+        if (answeredTotal > 0 || targetQ > 1) {
+          setResumeBanner(
+            `Bem-vindo(a), ${account.email}! Retomando na questão ${String(targetQ).padStart(3, '0')} (${answeredTotal}/${ALL_QUESTIONS.length} respondidas).`
+          );
+        } else {
+          setResumeBanner(`Conectado como ${account.email}. Seu progresso será salvo automaticamente.`);
+        }
+      } else {
+        const initialAnswers: AnswersMap = {
+          ...guestSnap.answers,
+          ...(localUserState?.answers || {}),
+        };
+        const initialQ =
+          localUserState?.currentQuestionId && localUserState.currentQuestionId > 1
+            ? localUserState.currentQuestionId
+            : guestSnap.currentQuestionId > 1
+              ? guestSnap.currentQuestionId
+              : Object.keys(initialAnswers).length > 0
+                ? findFirstUnansweredId(initialAnswers, ALL_QUESTIONS.length)
+                : 1;
+
+        setAnswers(initialAnswers);
+        setCurrentQuestionId(initialQ);
+
+        const existsNow = await saveAccountProgress(
+          account,
+          {
+            answers: initialAnswers,
+            currentQuestionId: initialQ,
+            selectedUnit,
+            selectedDifficulty,
+            statusFilter,
+            pageTheme,
+          },
+          false
+        );
+        cloudDocExistsRef.current = existsNow;
+        setResumeBanner(`Conectado como ${account.email}. Seu progresso será salvo automaticamente.`);
+      }
+
+      hydratedUidRef.current = account.uid;
+      setSyncState('synced');
+    } catch {
+      hydratedUidRef.current = account.uid;
+      setSyncState('error');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Auth listener & initial session restoration
+  useEffect(() => {
+    let cancelled = false;
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (cancelled) return;
+
+      if (user) {
+        const googleAcc: AppAccount = {
+          uid: user.uid,
+          email: user.email || 'usuario@google.com',
+          displayName: user.displayName || user.email?.split('@')[0] || 'Estudante',
+          provider: 'google',
+          firebaseUser: user,
+        };
+        await hydrateAccount(googleAcc);
+        return;
+      }
+
+      const emailSession = await restoreEmailSession();
+      if (cancelled) return;
+
+      if (emailSession) {
+        await hydrateAccount(emailSession);
+        return;
+      }
+
+      setAuthAccount(null);
+      setAuthReady(true);
+      hydratedUidRef.current = null;
+      cloudDocExistsRef.current = false;
+      setSyncState('guest');
+      setResumeBanner(null);
+      try {
+        const savedAns = localStorage.getItem(STORAGE_KEY);
+        const savedQ = Number(localStorage.getItem(LAST_QUESTION_KEY));
+        setAnswers(savedAns ? JSON.parse(savedAns) : {});
+        setCurrentQuestionId(
+          Number.isInteger(savedQ) && savedQ >= 1 && savedQ <= ALL_QUESTIONS.length ? savedQ : 1
+        );
+      } catch {
+        setAnswers({});
+        setCurrentQuestionId(1);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [hydrateAccount]);
+
+  // Debounced sync whenever state changes for a signed-in user
+  useEffect(() => {
+    if (!authAccount || hydratedUidRef.current !== authAccount.uid) return;
+
+    setSyncState('syncing');
+    const timer = window.setTimeout(async () => {
+      try {
+        const existsNow = await saveAccountProgress(
+          authAccount,
+          {
+            answers,
+            currentQuestionId,
+            selectedUnit,
+            selectedDifficulty,
+            statusFilter,
+            pageTheme,
+          },
+          cloudDocExistsRef.current
+        );
+        cloudDocExistsRef.current = existsNow;
+        setSyncState('synced');
+      } catch {
+        setSyncState('error');
+      }
+    }, 650);
+
+    return () => window.clearTimeout(timer);
+  }, [answers, currentQuestionId, selectedUnit, selectedDifficulty, statusFilter, pageTheme, authAccount]);
+
+  const handleEmailAuthenticated = async (account: EmailAccount) => {
+    await hydrateAccount(account);
+  };
+
+  const handleSignOut = async () => {
+    try {
+      if (authAccount && hydratedUidRef.current === authAccount.uid) {
+        await saveAccountProgress(
+          authAccount,
+          {
+            answers,
+            currentQuestionId,
+            selectedUnit,
+            selectedDifficulty,
+            statusFilter,
+            pageTheme,
+          },
+          cloudDocExistsRef.current
+        );
+      }
+    } catch {
+      // Proceed with sign out even if offline
+    }
+
+    if (authAccount?.provider === 'google') {
+      await signOut(auth);
+      return;
+    }
+
+    try {
+      localStorage.removeItem(EMAIL_TOKEN_STORAGE_KEY);
+    } catch {
+      // Ignore storage errors
+    }
+    setAuthAccount(null);
+    hydratedUidRef.current = null;
+    cloudDocExistsRef.current = false;
+    setSyncState('guest');
+    setResumeBanner(null);
+    try {
+      const savedAns = localStorage.getItem(STORAGE_KEY);
+      const savedQ = Number(localStorage.getItem(LAST_QUESTION_KEY));
+      setAnswers(savedAns ? JSON.parse(savedAns) : {});
+      setCurrentQuestionId(
+        Number.isInteger(savedQ) && savedQ >= 1 && savedQ <= ALL_QUESTIONS.length ? savedQ : 1
+      );
+    } catch {
+      setAnswers({});
+      setCurrentQuestionId(1);
+    }
+  };
+
+  const handleJumpToNextUnanswered = () => {
+    const nextId = findFirstUnansweredId(answers, ALL_QUESTIONS.length);
+    setSelectedUnit('all');
+    setSelectedDifficulty('all');
+    setStatusFilter('todas');
+    setCurrentQuestionId(nextId);
+    setActiveTab('simulado');
+  };
 
   const filteredQuestions = useMemo(() => {
     return ALL_QUESTIONS.filter((q) => {
@@ -166,7 +467,7 @@ export default function App() {
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (activeTab !== 'simulado') return;
+      if (activeTab !== 'simulado' || showAuthModal) return;
       if (
         e.target instanceof HTMLInputElement ||
         e.target instanceof HTMLSelectElement ||
@@ -255,7 +556,48 @@ export default function App() {
             </button>
           </nav>
 
-          <div className="flex items-center gap-2.5 shrink-0">
+          <div className="flex items-center gap-2 shrink-0">
+            {authReady && (
+              authAccount ? (
+                <div className="flex items-center gap-1.5">
+                  <div
+                    title={authAccount.email || 'Conta conectada'}
+                    className={`hidden sm:inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg border transition-colors whitespace-nowrap shrink-0 ${
+                      isDark
+                        ? 'border-zinc-600 bg-zinc-700 text-white'
+                        : 'border-slate-200 bg-slate-50 text-slate-800'
+                    }`}
+                  >
+                    {syncState === 'error' ? (
+                      <CloudOff className="w-3.5 h-3.5 text-amber-600" />
+                    ) : (
+                      <Cloud className="w-3.5 h-3.5 text-emerald-600" />
+                    )}
+                    <span className="max-w-[140px] truncate">{authAccount.email}</span>
+                  </div>
+                  <button
+                    onClick={handleSignOut}
+                    title="Sair da conta"
+                    className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg border transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                      isDark
+                        ? 'border-zinc-600 bg-zinc-700 text-white hover:bg-zinc-600'
+                        : 'border-slate-300/80 bg-white text-slate-800 hover:bg-slate-50'
+                    }`}
+                  >
+                    <LogOut className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Sair</span>
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setShowAuthModal(true)}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg bg-blue-700 text-white hover:bg-blue-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                >
+                  <LogIn className="w-3.5 h-3.5" />
+                  Entrar
+                </button>
+              )
+            )}
             <button
               onClick={cyclePageTheme}
               title="Mudar cor da página"
@@ -272,14 +614,14 @@ export default function App() {
             </button>
             <button
               onClick={handleReset}
-              className={`inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+              className={`inline-flex items-center gap-2 px-3 sm:px-4 py-2 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                 confirmReset
                   ? 'bg-red-600 text-white hover:bg-red-700'
                   : 'bg-slate-900 text-white hover:bg-slate-800'
               }`}
             >
               <RotateCcw className="w-3.5 h-3.5" />
-              {confirmReset ? 'Confirmar Reinício' : 'Reiniciar'}
+              {confirmReset ? 'Confirmar' : 'Reiniciar'}
             </button>
           </div>
         </div>
@@ -314,6 +656,26 @@ export default function App() {
       </header>
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-8">
+        {resumeBanner && (
+          <div className={`mb-6 border rounded-xl px-4 py-3 flex items-center justify-between gap-4 text-xs sm:text-sm ${
+            isDark
+              ? 'bg-emerald-950/50 border-emerald-800 text-emerald-200'
+              : 'bg-emerald-50 border-emerald-200 text-emerald-900'
+          }`}>
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
+              <span>{resumeBanner}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setResumeBanner(null)}
+              className="text-xs font-semibold underline shrink-0 cursor-pointer"
+            >
+              Fechar
+            </button>
+          </div>
+        )}
+
         {activeTab === 'simulado' && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
             {/* Left / Main Interactive Question Stage */}
@@ -513,6 +875,52 @@ export default function App() {
 
             {/* Right / Control & Navigator Deck */}
             <aside className="lg:col-span-4 space-y-6">
+              {/* Account & Cloud Resume Card */}
+              <div className={`border rounded-xl p-5 space-y-3 transition-colors ${surfaceClass}`}>
+                {authAccount ? (
+                  <>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-semibold text-slate-500">Conta Conectada</span>
+                      <span
+                        className={`text-[11px] font-medium ${
+                          syncState === 'error' ? 'text-red-600' : 'text-emerald-600'
+                        }`}
+                      >
+                        {syncState === 'syncing'
+                          ? 'Salvando...'
+                          : syncState === 'error'
+                            ? 'Salvo localmente'
+                            : 'Progresso salvo'}
+                      </span>
+                    </div>
+                    <p className="text-xs font-mono truncate">{authAccount.email}</p>
+                    <button
+                      type="button"
+                      onClick={handleJumpToNextUnanswered}
+                      className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg bg-blue-700 text-white hover:bg-blue-800 transition-colors cursor-pointer"
+                    >
+                      <Compass className="w-3.5 h-3.5" />
+                      Ir para próxima não respondida
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <div className="text-sm font-semibold">Retome onde parou</div>
+                    <p className={`text-xs leading-relaxed ${isDark ? 'text-white/75' : 'text-slate-600'}`}>
+                      Entre com seu e-mail para salvar suas respostas e continuar o simulado de onde parou.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setShowAuthModal(true)}
+                      className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 text-xs font-semibold rounded-lg bg-blue-700 text-white hover:bg-blue-800 transition-colors cursor-pointer"
+                    >
+                      <LogIn className="w-3.5 h-3.5" />
+                      Entrar por E-mail
+                    </button>
+                  </>
+                )}
+              </div>
+
               {/* Live TRI Score Card */}
               <div className={`border rounded-xl p-5 transition-colors ${surfaceClass}`}>
                 <div className="flex items-center justify-between mb-3">
@@ -944,6 +1352,14 @@ export default function App() {
           </div>
         </div>
       </section>
+
+      <AuthModal
+        isOpen={showAuthModal}
+        onClose={() => setShowAuthModal(false)}
+        isDark={isDark}
+        isSepia={isSepia}
+        onEmailAuthenticated={handleEmailAuthenticated}
+      />
     </div>
   );
 }

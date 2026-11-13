@@ -71,7 +71,8 @@
   color: #f87171;
 }
 
-.theme-dark .bg-emerald-100 {
+.theme-dark .bg-emerald-100,
+.theme-dark .bg-emerald-50 {
   background-color: #064e3b;
 }
 
@@ -83,7 +84,8 @@
   border-color: #10b981;
 }
 
-.theme-dark .bg-red-100 {
+.theme-dark .bg-red-100,
+.theme-dark .bg-red-50 {
   background-color: #7f1d1d;
 }
 
@@ -93,6 +95,18 @@
 
 .theme-dark .border-red-300 {
   border-color: #ef4444;
+}
+
+.theme-dark .bg-amber-50 {
+  background-color: #78350f;
+}
+
+.theme-dark .text-amber-900 {
+  color: #fde68a;
+}
+
+.theme-dark .border-amber-300 {
+  border-color: #f59e0b;
 }
 
 .theme-dark select {
