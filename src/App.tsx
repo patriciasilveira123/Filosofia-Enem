@@ -97,7 +97,7 @@ export default function App() {
   const [pageTheme, setPageTheme] = useState<PageTheme>(() => {
     try {
       const saved = localStorage.getItem(THEME_KEY) as PageTheme | null;
-      return saved === 'sepia' || saved === 'escuro' ? saved : 'claro';
+      return saved === 'cinza' || saved === 'sepia' || saved === 'escuro' ? saved : 'claro';
     } catch {
       return 'claro';
     }
@@ -132,38 +132,46 @@ export default function App() {
     }
     const bgMap: Record<PageTheme, string> = {
       claro: '#f8fafc',
-      sepia: '#fef9c3',
+      cinza: '#bfc5ce',
+      sepia: '#efe6d5',
       escuro: '#18181b',
     };
     document.body.style.backgroundColor = bgMap[pageTheme];
   }, [pageTheme]);
 
   const cyclePageTheme = () => {
-    setPageTheme((prev) => (prev === 'claro' ? 'sepia' : prev === 'sepia' ? 'escuro' : 'claro'));
+    setPageTheme((prev) =>
+      prev === 'claro'
+        ? 'cinza'
+        : prev === 'cinza'
+          ? 'sepia'
+          : prev === 'sepia'
+            ? 'escuro'
+            : 'claro'
+    );
   };
-
-  const pageBgClass =
-    pageTheme === 'sepia'
-      ? 'bg-[#FEFCE8] text-slate-900'
-      : pageTheme === 'escuro'
-        ? 'bg-zinc-900 text-white'
-        : 'bg-slate-50 text-slate-900';
-
-  const surfaceClass =
-    pageTheme === 'sepia'
-      ? 'bg-[#FEF9C3] border-amber-200 text-slate-900'
-      : pageTheme === 'escuro'
-        ? 'bg-zinc-800 border-zinc-700 text-white'
-        : 'bg-white border-slate-200 text-slate-900';
 
   const isDark = pageTheme === 'escuro';
   const isSepia = pageTheme === 'sepia';
+  const isGray = pageTheme === 'cinza';
 
-  const headerClass = isSepia
-    ? 'bg-[#FEF9C3] border-amber-200 text-slate-900'
-    : isDark
-      ? 'bg-zinc-800 border-zinc-700 text-white'
-      : 'bg-white border-slate-200 text-slate-900';
+  const pageBgClass = isSepia
+    ? 'bg-[#EFE6D5] text-[#2C2219]'
+    : isGray
+      ? 'bg-[#BFC5CE] text-slate-900'
+      : isDark
+        ? 'bg-zinc-900 text-white'
+        : 'bg-slate-50 text-slate-900';
+
+  const surfaceClass = isSepia
+    ? 'bg-[#F7F0E2] border-[#D8C9B0] text-[#2C2219]'
+    : isGray
+      ? 'bg-[#D5DAE2] border-[#A3ACB9] text-slate-900'
+      : isDark
+        ? 'bg-zinc-800 border-zinc-700 text-white'
+        : 'bg-white border-slate-200 text-slate-900';
+
+  const headerClass = surfaceClass;
 
   // Keep latest guest or authenticated local cache updated
   useEffect(() => {
@@ -678,7 +686,11 @@ export default function App() {
   const isAnswered = Boolean(userAnswer);
 
   return (
-    <div className={`min-h-screen flex flex-col transition-colors ${pageBgClass} ${isDark ? 'theme-dark' : ''}`}>
+    <div
+      className={`min-h-screen flex flex-col transition-colors ${pageBgClass} ${
+        isDark ? 'theme-dark' : isSepia ? 'theme-sepia' : isGray ? 'theme-gray' : ''
+      }`}
+    >
       {/* Top Bar Contract */}
       <header className={`border-b sticky top-0 z-30 transition-colors ${headerClass}`}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4 sm:gap-8">
@@ -741,7 +753,11 @@ export default function App() {
                     className={`hidden sm:inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg border transition-colors whitespace-nowrap shrink-0 ${
                       isDark
                         ? 'border-zinc-600 bg-zinc-700 text-white'
-                        : 'border-slate-200 bg-slate-50 text-slate-800'
+                        : isGray
+                          ? 'border-[#9EA7B5] bg-[#C7CDD7] text-slate-900'
+                          : isSepia
+                            ? 'border-[#CBB89A] bg-[#EDE3CF] text-[#2C2219]'
+                            : 'border-slate-200 bg-slate-50 text-slate-800'
                     }`}
                   >
                     {syncState === 'error' ? (
@@ -757,7 +773,11 @@ export default function App() {
                     className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg border transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                       isDark
                         ? 'border-zinc-600 bg-zinc-700 text-white hover:bg-zinc-600'
-                        : 'border-slate-300/80 bg-white text-slate-800 hover:bg-slate-50'
+                        : isGray
+                          ? 'border-[#9EA7B5] bg-[#C7CDD7] text-slate-900 hover:bg-[#BCC3CF]'
+                          : isSepia
+                            ? 'border-[#CBB89A] bg-[#EDE3CF] text-[#2C2219] hover:bg-[#E4D6BD]'
+                            : 'border-slate-300/80 bg-white text-slate-800 hover:bg-slate-50'
                     }`}
                   >
                     <LogOut className="w-3.5 h-3.5" />
@@ -776,17 +796,25 @@ export default function App() {
             )}
             <button
               onClick={cyclePageTheme}
-              title="Mudar cor da página"
+              title="Mudar cor da página (Claro, Cinza, Sépia, Escuro)"
               className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg border transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                 isDark
                   ? 'border-zinc-600 bg-zinc-700 text-white hover:bg-zinc-600'
                   : isSepia
-                    ? 'border-amber-300 bg-[#FEFCE8] text-slate-900 hover:bg-amber-100'
-                    : 'border-slate-300/80 bg-white/80 text-slate-800 hover:bg-white'
+                    ? 'border-[#CBB89A] bg-[#EDE3CF] text-[#2C2219] hover:bg-[#E4D6BD]'
+                    : isGray
+                      ? 'border-[#9EA7B5] bg-[#C7CDD7] text-slate-900 hover:bg-[#BCC3CF]'
+                      : 'border-slate-300/80 bg-white/80 text-slate-800 hover:bg-white'
               }`}
             >
-              <Palette className="w-3.5 h-3.5 text-blue-700" />
-              {pageTheme === 'claro' ? 'Claro' : pageTheme === 'sepia' ? 'Sépia' : 'Escuro'}
+              <Palette className={`w-3.5 h-3.5 ${isDark ? 'text-blue-400' : 'text-blue-700'}`} />
+              {pageTheme === 'claro'
+                ? 'Claro'
+                : pageTheme === 'cinza'
+                  ? 'Cinza'
+                  : pageTheme === 'sepia'
+                    ? 'Sépia'
+                    : 'Escuro'}
             </button>
             <button
               onClick={handleReset}
@@ -805,7 +833,7 @@ export default function App() {
         {/* Mobile Nav */}
         <div
           className={`md:hidden border-t px-4 py-2 flex items-center justify-around text-xs font-medium text-slate-600 ${
-            isSepia ? 'border-amber-200' : 'border-slate-100'
+            isSepia ? 'border-[#D8C9B0]' : isGray ? 'border-[#A3ACB9]' : 'border-slate-100'
           }`}
         >
           <button
@@ -840,7 +868,9 @@ export default function App() {
           <div className={`mb-6 border rounded-xl px-4 py-3 flex items-center justify-between gap-4 text-xs sm:text-sm ${
             isDark
               ? 'bg-emerald-950/50 border-emerald-800 text-emerald-200'
-              : 'bg-emerald-50 border-emerald-200 text-emerald-900'
+              : isGray
+                ? 'bg-[#BFE0CD] border-[#15803D] text-slate-900'
+                : 'bg-emerald-50 border-emerald-200 text-emerald-900'
           }`}>
             <div className="flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
@@ -904,14 +934,20 @@ export default function App() {
                   isDark
                     ? 'bg-slate-800 border-slate-700 text-white'
                     : isSepia
-                      ? 'bg-[#FEFCE8] border-amber-200 text-slate-900'
-                      : 'bg-slate-50 border-slate-200/80 text-slate-800'
+                      ? 'bg-[#EDE3CF] border-[#D8C9B0] text-[#2C2219]'
+                      : isGray
+                        ? 'bg-[#C7CDD7] border-[#A3ACB9] text-slate-900'
+                        : 'bg-slate-50 border-slate-200/80 text-slate-800'
                 }`}
               >
                 <p className="text-[15px] sm:text-base leading-relaxed whitespace-pre-line text-justify">
                   {currentQuestion.baseText}
                 </p>
-                <p className={`mt-3 text-xs italic ${isDark ? 'text-white/80' : 'text-slate-500'}`}>
+                <p
+                  className={`mt-3 text-xs italic ${
+                    isDark ? 'text-white/80' : isSepia ? 'text-[#6B5844]' : isGray ? 'text-slate-700' : 'text-slate-500'
+                  }`}
+                >
                   {currentQuestion.source}
                 </p>
               </div>
@@ -919,7 +955,7 @@ export default function App() {
               {/* Command */}
               <h1
                 className={`font-sans text-base sm:text-lg font-semibold leading-snug mb-6 ${
-                  isDark ? 'text-white' : 'text-slate-900'
+                  isDark ? 'text-white' : isSepia ? 'text-[#2C2219]' : 'text-slate-900'
                 }`}
               >
                 {currentQuestion.command}
@@ -934,30 +970,44 @@ export default function App() {
                   let containerClass = isDark
                     ? 'border-zinc-600 bg-zinc-700/70 hover:border-zinc-500 hover:bg-zinc-700 text-white'
                     : isSepia
-                      ? 'border-amber-200 bg-[#FEFCE8] hover:bg-[#FEF9C3] text-slate-900'
-                      : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50 text-slate-800';
+                      ? 'border-[#D8C9B0] bg-[#FAF5EA] hover:bg-[#EDE3CF] text-[#2C2219]'
+                      : isGray
+                        ? 'border-[#A3ACB9] bg-[#CBD1DA] hover:bg-[#C0C7D2] text-slate-900'
+                        : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50 text-slate-800';
                   let badgeClass = isDark
                     ? 'bg-zinc-800 text-white border-zinc-500'
-                    : 'bg-slate-100 text-slate-700 border-slate-200';
+                    : isSepia
+                      ? 'bg-[#EDE3CF] text-[#4A3B2C] border-[#D8C9B0]'
+                      : isGray
+                        ? 'bg-[#BCC3CF] text-slate-900 border-[#9EA7B5]'
+                        : 'bg-slate-100 text-slate-700 border-slate-200';
                   let statusText = '';
 
                   if (isAnswered) {
                     if (isCorrectAlt) {
                       containerClass = isDark
                         ? 'border-emerald-500 bg-emerald-950/60 text-white'
-                        : 'border-emerald-600 bg-emerald-50/50';
+                        : isGray
+                          ? 'border-emerald-700 bg-[#BFE0CD] text-slate-900'
+                          : 'border-emerald-600 bg-emerald-50/70';
                       badgeClass = 'bg-emerald-600 text-white border-emerald-600';
                       statusText = isSelected ? 'Sua escolha · Correta' : 'Gabarito Correto';
                     } else if (isSelected && !isCorrectAlt) {
                       containerClass = isDark
                         ? 'border-red-500 bg-red-950/60 text-white'
-                        : 'border-red-600 bg-red-50/50';
+                        : isGray
+                          ? 'border-red-700 bg-[#E6C2C5] text-slate-900'
+                          : 'border-red-600 bg-red-50/70';
                       badgeClass = 'bg-red-600 text-white border-red-600';
                       statusText = 'Sua escolha · Incorreta';
                     } else {
                       containerClass = isDark
                         ? 'border-zinc-700 bg-zinc-800/60 text-white opacity-90'
-                        : 'border-slate-200 bg-white opacity-90';
+                        : isSepia
+                          ? 'border-[#D8C9B0] bg-[#FAF5EA] opacity-90'
+                          : isGray
+                            ? 'border-[#A3ACB9] bg-[#CBD1DA] opacity-90'
+                            : 'border-slate-200 bg-white opacity-90';
                     }
                   }
 
@@ -1454,7 +1504,7 @@ export default function App() {
               </div>
             </div>
 
-            <div className={`border rounded-xl divide-y transition-colors ${surfaceClass} ${isSepia ? 'divide-amber-200' : 'divide-slate-200'}`}>
+            <div className={`border rounded-xl divide-y transition-colors ${surfaceClass} ${isSepia ? 'divide-[#D8C9B0]' : isGray ? 'divide-[#A3ACB9]' : 'divide-slate-200'}`}>
               {ALL_QUESTIONS.map((q) => {
                 const correctAlt = q.alternatives.find((a) => a.key === q.correct);
                 const userAns = answers[q.id];
@@ -1555,8 +1605,7 @@ export default function App() {
       <AuthModal
         isOpen={showAuthModal}
         onClose={() => setShowAuthModal(false)}
-        isDark={isDark}
-        isSepia={isSepia}
+        pageTheme={pageTheme}
         onEmailAuthenticated={handleEmailAuthenticated}
       />
     </div>

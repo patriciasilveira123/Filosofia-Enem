@@ -5,7 +5,7 @@ import { AlternativeKey, AnswersMap, Difficulty } from '../types/quiz';
 import { CURRICULUM } from '../data/curriculum';
 
 export type StatusFilter = 'todas' | 'nao_respondidas' | 'erradas';
-export type PageTheme = 'claro' | 'sepia' | 'escuro';
+export type PageTheme = 'claro' | 'cinza' | 'sepia' | 'escuro';
 
 export interface SavedProgressState {
   answers: AnswersMap;
@@ -47,7 +47,7 @@ const VALID_KEYS = new Set<AlternativeKey>(['A', 'B', 'C', 'D', 'E']);
 const VALID_UNITS = new Set<string>(['all', ...CURRICULUM.map((u) => u.id)]);
 const VALID_DIFFS = new Set<string>(['all', 'Fácil', 'Médio', 'Difícil']);
 const VALID_STATUS = new Set<string>(['todas', 'nao_respondidas', 'erradas']);
-const VALID_THEMES = new Set<string>(['claro', 'sepia', 'escuro']);
+const VALID_THEMES = new Set<string>(['claro', 'cinza', 'sepia', 'escuro']);
 
 function sanitizeAnswers(raw: unknown): AnswersMap {
   const clean: AnswersMap = {};

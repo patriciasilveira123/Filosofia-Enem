@@ -2,13 +2,12 @@ import { FormEvent, useEffect, useState } from 'react';
 import { signInWithPopup } from 'firebase/auth';
 import { Eye, EyeOff, Mail, X, CheckCircle2, AlertCircle, KeyRound, ArrowLeft } from 'lucide-react';
 import { auth, googleProvider, translateAuthError } from '../firebase';
-import { EMAIL_TOKEN_STORAGE_KEY, EmailAccount } from '../services/progressSync';
+import { EMAIL_TOKEN_STORAGE_KEY, EmailAccount, PageTheme } from '../services/progressSync';
 
 interface AuthModalProps {
   isOpen: boolean;
   onClose: () => void;
-  isDark: boolean;
-  isSepia: boolean;
+  pageTheme: PageTheme;
   onEmailAuthenticated: (
     account: EmailAccount,
     options?: {
@@ -27,8 +26,7 @@ const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export function AuthModal({
   isOpen,
   onClose,
-  isDark,
-  isSepia,
+  pageTheme,
   onEmailAuthenticated,
 }: AuthModalProps) {
   const [mode, setMode] = useState<AuthMode>('login');
@@ -74,17 +72,25 @@ export function AuthModal({
 
   if (!isOpen) return null;
 
+  const isDark = pageTheme === 'escuro';
+  const isSepia = pageTheme === 'sepia';
+  const isGray = pageTheme === 'cinza';
+
   const modalSurface = isDark
     ? 'bg-zinc-800 border-zinc-700 text-white'
     : isSepia
-      ? 'bg-[#FEF9C3] border-amber-200 text-slate-900'
-      : 'bg-white border-slate-200 text-slate-900';
+      ? 'bg-[#F7F0E2] border-[#D8C9B0] text-[#2C2219]'
+      : isGray
+        ? 'bg-[#D5DAE2] border-[#A3ACB9] text-slate-900'
+        : 'bg-white border-slate-200 text-slate-900';
 
   const inputClass = isDark
     ? 'w-full rounded-lg border border-zinc-600 bg-zinc-900 px-3 py-2 text-sm text-white placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-blue-500'
     : isSepia
-      ? 'w-full rounded-lg border border-amber-300 bg-[#FEFCE8] px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-700'
-      : 'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-700';
+      ? 'w-full rounded-lg border border-[#CBB89A] bg-[#FAF5EA] px-3 py-2 text-sm text-[#2C2219] placeholder:text-[#7D6B55] focus:outline-none focus:ring-2 focus:ring-blue-700'
+      : isGray
+        ? 'w-full rounded-lg border border-[#9EA7B5] bg-[#C7CDD7] px-3 py-2 text-sm text-slate-900 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-700'
+        : 'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-700';
 
   const linkClass = isDark
     ? 'text-blue-400 hover:underline cursor-pointer'
@@ -326,7 +332,11 @@ export function AuthModal({
             <h2 id="auth-modal-title" className="font-display text-xl font-bold">
               {mode === 'forgot' ? 'Recuperar senha' : 'Entrar por E-mail'}
             </h2>
-            <p className={`text-xs mt-1 ${isDark ? 'text-zinc-300' : 'text-slate-600'}`}>
+            <p
+              className={`text-xs mt-1 ${
+                isDark ? 'text-zinc-300' : isSepia ? 'text-[#5F503F]' : isGray ? 'text-slate-700' : 'text-slate-600'
+              }`}
+            >
               {mode === 'forgot'
                 ? 'Enviaremos um código de 6 dígitos para o seu e-mail cadastrado.'
                 : 'Salve suas respostas online e retome exatamente da questão onde parou em qualquer dispositivo.'}
@@ -520,7 +530,11 @@ export function AuthModal({
               className={`w-full inline-flex items-center justify-center gap-2.5 px-4 py-2.5 rounded-lg border text-sm font-semibold transition-colors disabled:opacity-50 cursor-pointer ${
                 isDark
                   ? 'border-zinc-600 bg-zinc-700 text-white hover:bg-zinc-600'
-                  : 'border-slate-300 bg-white text-slate-900 hover:bg-slate-50'
+                  : isSepia
+                    ? 'border-[#CBB89A] bg-[#FAF5EA] text-[#2C2219] hover:bg-[#EDE3CF]'
+                    : isGray
+                      ? 'border-[#9EA7B5] bg-[#C7CDD7] text-slate-900 hover:bg-[#BCC3CF]'
+                      : 'border-slate-300 bg-white text-slate-900 hover:bg-slate-50'
               }`}
             >
               <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
@@ -545,13 +559,23 @@ export function AuthModal({
             </button>
 
             <div className="flex items-center gap-3">
-              <div className={`h-px flex-1 ${isDark ? 'bg-zinc-700' : 'bg-slate-200'}`} />
+              <div
+                className={`h-px flex-1 ${
+                  isDark ? 'bg-zinc-700' : isSepia ? 'bg-[#D8C9B0]' : isGray ? 'bg-[#A3ACB9]' : 'bg-slate-200'
+                }`}
+              />
               <span
-                className={`text-[11px] uppercase tracking-wider font-medium ${isDark ? 'text-zinc-400' : 'text-slate-500'}`}
+                className={`text-[11px] uppercase tracking-wider font-medium ${
+                  isDark ? 'text-zinc-400' : isSepia ? 'text-[#6B5844]' : isGray ? 'text-slate-700' : 'text-slate-500'
+                }`}
               >
                 ou use e-mail e senha
               </span>
-              <div className={`h-px flex-1 ${isDark ? 'bg-zinc-700' : 'bg-slate-200'}`} />
+              <div
+                className={`h-px flex-1 ${
+                  isDark ? 'bg-zinc-700' : isSepia ? 'bg-[#D8C9B0]' : isGray ? 'bg-[#A3ACB9]' : 'bg-slate-200'
+                }`}
+              />
             </div>
 
             <div
@@ -559,8 +583,10 @@ export function AuthModal({
                 isDark
                   ? 'bg-zinc-900 border-zinc-700'
                   : isSepia
-                    ? 'bg-[#FEFCE8] border-amber-200'
-                    : 'bg-slate-100 border-slate-200'
+                    ? 'bg-[#EDE3CF] border-[#D8C9B0]'
+                    : isGray
+                      ? 'bg-[#BFC5CE] border-[#9EA7B5]'
+                      : 'bg-slate-100 border-slate-200'
               }`}
             >
               <button

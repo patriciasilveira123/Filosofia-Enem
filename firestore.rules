@@ -110,7 +110,7 @@ service cloud.firestore {
         && data.pageTheme is string
         && data.pageTheme.size() >= 1
         && data.pageTheme.size() <= 16
-        && data.pageTheme in ['claro', 'sepia', 'escuro']
+        && data.pageTheme in ['claro', 'cinza', 'sepia', 'escuro']
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
@@ -221,7 +221,7 @@ service cloud.firestore {
         && data.pageTheme is string
         && data.pageTheme.size() >= 1
         && data.pageTheme.size() <= 16
-        && data.pageTheme in ['claro', 'sepia', 'escuro']
+        && data.pageTheme in ['claro', 'cinza', 'sepia', 'escuro']
         && hasServerTag(data)
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;

@@ -80,7 +80,7 @@
         },
         "pageTheme": {
           "type": "string",
-          "enum": ["claro", "sepia", "escuro"],
+          "enum": ["claro", "cinza", "sepia", "escuro"],
           "minLength": 1,
           "maxLength": 16,
           "description": "Tema visual preferido."
@@ -245,7 +245,7 @@
         },
         "pageTheme": {
           "type": "string",
-          "enum": ["claro", "sepia", "escuro"],
+          "enum": ["claro", "cinza", "sepia", "escuro"],
           "minLength": 1,
           "maxLength": 16,
           "description": "Tema visual preferido."

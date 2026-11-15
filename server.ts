@@ -36,7 +36,7 @@ interface StoredProgress {
   selectedUnit: string;
   selectedDifficulty: 'all' | 'Fácil' | 'Médio' | 'Difícil';
   statusFilter: 'todas' | 'nao_respondidas' | 'erradas';
-  pageTheme: 'claro' | 'sepia' | 'escuro';
+  pageTheme: 'claro' | 'cinza' | 'sepia' | 'escuro';
   updatedAt: string;
 }
 
@@ -83,7 +83,7 @@ const VALID_ALT_KEYS = new Set(['A', 'B', 'C', 'D', 'E']);
 const VALID_UNITS = new Set(['all', 'u1', 'u2', 'u3', 'u4', 'u5', 'u6', 'outros']);
 const VALID_DIFFS = new Set(['all', 'Fácil', 'Médio', 'Difícil']);
 const VALID_STATUS = new Set(['todas', 'nao_respondidas', 'erradas']);
-const VALID_THEMES = new Set(['claro', 'sepia', 'escuro']);
+const VALID_THEMES = new Set(['claro', 'cinza', 'sepia', 'escuro']);
 
 function computeAccountKey(email: string): string {
   const hex = crypto.createHmac('sha256', ACCOUNT_PEPPER).update(`email:${email}`).digest('hex');
