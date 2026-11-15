@@ -38,6 +38,7 @@ import {
   sanitizeProgressState,
   saveAccountProgress,
   SavedProgressState,
+  SessionExpiredError,
   StatusFilter,
 } from './services/progressSync';
 
@@ -81,9 +82,13 @@ export default function App() {
   const [showAuthModal, setShowAuthModal] = useState<boolean>(false);
   const [syncState, setSyncState] = useState<SyncState>('guest');
   const [resumeBanner, setResumeBanner] = useState<string | null>(null);
+  const [pinnedQuestionId, setPinnedQuestionId] = useState<number | null>(null);
 
   const hydratedUidRef = useRef<string | null>(null);
   const cloudDocExistsRef = useRef<boolean>(false);
+  const skipNextSyncRef = useRef<boolean>(false);
+  const syncTimerRef = useRef<number | null>(null);
+  const resetTimerRef = useRef<number | null>(null);
   const latestGuestRef = useRef<{ answers: AnswersMap; currentQuestionId: number }>({
     answers,
     currentQuestionId,
@@ -97,6 +102,27 @@ export default function App() {
       return 'claro';
     }
   });
+
+  const latestPrefsRef = useRef<{
+    selectedUnit: string;
+    selectedDifficulty: Difficulty | 'all';
+    statusFilter: StatusFilter;
+    pageTheme: PageTheme;
+  }>({
+    selectedUnit,
+    selectedDifficulty,
+    statusFilter,
+    pageTheme,
+  });
+
+  useEffect(() => {
+    latestPrefsRef.current = {
+      selectedUnit,
+      selectedDifficulty,
+      statusFilter,
+      pageTheme,
+    };
+  }, [selectedUnit, selectedDifficulty, statusFilter, pageTheme]);
 
   useEffect(() => {
     try {
@@ -171,6 +197,10 @@ export default function App() {
     setAuthReady(true);
     setSyncState('loading');
     hydratedUidRef.current = null;
+    if (syncTimerRef.current !== null) {
+      window.clearTimeout(syncTimerRef.current);
+      syncTimerRef.current = null;
+    }
 
     let localUserState: SavedProgressState | null = null;
     try {
@@ -183,6 +213,17 @@ export default function App() {
     }
 
     const guestSnap = latestGuestRef.current;
+    const prefs = latestPrefsRef.current;
+
+    const clearGuestStorage = () => {
+      latestGuestRef.current = { answers: {}, currentQuestionId: 1 };
+      try {
+        localStorage.removeItem(STORAGE_KEY);
+        localStorage.removeItem(LAST_QUESTION_KEY);
+      } catch {
+        // Ignore storage errors
+      }
+    };
 
     try {
       if (account.provider === 'google' && account.firebaseUser.emailVerified) {
@@ -197,6 +238,8 @@ export default function App() {
           ...(localUserState?.answers || {}),
           ...cloudRes.state.answers,
         };
+        const hasNewLocalAnswers =
+          Object.keys(mergedAnswers).length > Object.keys(cloudRes.state.answers).length;
         const answeredTotal = Object.keys(mergedAnswers).length;
         const targetQ =
           cloudRes.state.currentQuestionId > 1
@@ -205,12 +248,17 @@ export default function App() {
               ? findFirstUnansweredId(mergedAnswers, ALL_QUESTIONS.length)
               : guestSnap.currentQuestionId;
 
+        if (!hasNewLocalAnswers && targetQ === cloudRes.state.currentQuestionId) {
+          skipNextSyncRef.current = true;
+        }
         setAnswers(mergedAnswers);
         setCurrentQuestionId(targetQ);
         setSelectedUnit(cloudRes.state.selectedUnit);
         setSelectedDifficulty(cloudRes.state.selectedDifficulty);
         setStatusFilter(cloudRes.state.statusFilter);
         setPageTheme(cloudRes.state.pageTheme);
+        setPinnedQuestionId(null);
+        clearGuestStorage();
 
         if (answeredTotal > 0 || targetQ > 1) {
           setResumeBanner(
@@ -233,18 +281,21 @@ export default function App() {
                 ? findFirstUnansweredId(initialAnswers, ALL_QUESTIONS.length)
                 : 1;
 
+        skipNextSyncRef.current = true;
         setAnswers(initialAnswers);
         setCurrentQuestionId(initialQ);
+        setPinnedQuestionId(null);
+        clearGuestStorage();
 
         const existsNow = await saveAccountProgress(
           account,
           {
             answers: initialAnswers,
             currentQuestionId: initialQ,
-            selectedUnit,
-            selectedDifficulty,
-            statusFilter,
-            pageTheme,
+            selectedUnit: prefs.selectedUnit,
+            selectedDifficulty: prefs.selectedDifficulty,
+            statusFilter: prefs.statusFilter,
+            pageTheme: prefs.pageTheme,
           },
           false
         );
@@ -254,11 +305,32 @@ export default function App() {
 
       hydratedUidRef.current = account.uid;
       setSyncState('synced');
-    } catch {
+    } catch (err) {
+      if (err instanceof SessionExpiredError) {
+        try {
+          localStorage.removeItem(EMAIL_TOKEN_STORAGE_KEY);
+        } catch {
+          // Ignore storage errors
+        }
+        setAuthAccount(null);
+        hydratedUidRef.current = null;
+        cloudDocExistsRef.current = false;
+        setSyncState('guest');
+        setResumeBanner('Sua sessão por e-mail expirou. Entre novamente para sincronizar.');
+        return;
+      }
+      if (localUserState) {
+        skipNextSyncRef.current = true;
+        setAnswers(localUserState.answers);
+        setCurrentQuestionId(localUserState.currentQuestionId);
+        setSelectedUnit(localUserState.selectedUnit);
+        setSelectedDifficulty(localUserState.selectedDifficulty);
+        setStatusFilter(localUserState.statusFilter);
+        setPageTheme(localUserState.pageTheme);
+      }
       hydratedUidRef.current = account.uid;
       setSyncState('error');
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Auth listener & initial session restoration
@@ -268,6 +340,11 @@ export default function App() {
       if (cancelled) return;
 
       if (user) {
+        try {
+          localStorage.removeItem(EMAIL_TOKEN_STORAGE_KEY);
+        } catch {
+          // Ignore storage errors
+        }
         const googleAcc: AppAccount = {
           uid: user.uid,
           email: user.email || 'usuario@google.com',
@@ -316,8 +393,17 @@ export default function App() {
   useEffect(() => {
     if (!authAccount || hydratedUidRef.current !== authAccount.uid) return;
 
+    if (skipNextSyncRef.current) {
+      skipNextSyncRef.current = false;
+      return;
+    }
+
     setSyncState('syncing');
-    const timer = window.setTimeout(async () => {
+    if (syncTimerRef.current !== null) {
+      window.clearTimeout(syncTimerRef.current);
+    }
+    syncTimerRef.current = window.setTimeout(async () => {
+      syncTimerRef.current = null;
       try {
         const existsNow = await saveAccountProgress(
           authAccount,
@@ -333,19 +419,59 @@ export default function App() {
         );
         cloudDocExistsRef.current = existsNow;
         setSyncState('synced');
-      } catch {
+      } catch (err) {
+        if (err instanceof SessionExpiredError) {
+          try {
+            localStorage.removeItem(EMAIL_TOKEN_STORAGE_KEY);
+          } catch {
+            // Ignore storage errors
+          }
+          setAuthAccount(null);
+          hydratedUidRef.current = null;
+          cloudDocExistsRef.current = false;
+          setSyncState('guest');
+          setResumeBanner('Sua sessão por e-mail expirou. Entre novamente para salvar na nuvem.');
+          return;
+        }
         setSyncState('error');
       }
     }, 650);
 
-    return () => window.clearTimeout(timer);
+    return () => {
+      if (syncTimerRef.current !== null) {
+        window.clearTimeout(syncTimerRef.current);
+        syncTimerRef.current = null;
+      }
+    };
   }, [answers, currentQuestionId, selectedUnit, selectedDifficulty, statusFilter, pageTheme, authAccount]);
 
-  const handleEmailAuthenticated = async (account: EmailAccount) => {
+  const handleEmailAuthenticated = async (
+    account: EmailAccount,
+    options?: {
+      welcomeEmailSent?: boolean;
+      welcomeEmailError?: string;
+      isNewRegistration?: boolean;
+    }
+  ) => {
     await hydrateAccount(account);
+    if (options?.isNewRegistration) {
+      if (options.welcomeEmailSent) {
+        setResumeBanner(
+          `Conta criada para ${account.email}! Enviamos um e-mail de boas-vindas com seu login e senha para a sua caixa de entrada.`
+        );
+      } else if (options.welcomeEmailError) {
+        setResumeBanner(
+          `Conta criada e salva online para ${account.email}! Porém o e-mail de boas-vindas não pôde ser enviado agora: ${options.welcomeEmailError}`
+        );
+      }
+    }
   };
 
   const handleSignOut = async () => {
+    if (syncTimerRef.current !== null) {
+      window.clearTimeout(syncTimerRef.current);
+      syncTimerRef.current = null;
+    }
     try {
       if (authAccount && hydratedUidRef.current === authAccount.uid) {
         await saveAccountProgress(
@@ -368,6 +494,17 @@ export default function App() {
     if (authAccount?.provider === 'google') {
       await signOut(auth);
       return;
+    }
+
+    if (authAccount?.provider === 'email') {
+      try {
+        await fetch('/api/auth/logout', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${authAccount.token}` },
+        });
+      } catch {
+        // Ignore network errors on logout
+      }
     }
 
     try {
@@ -395,6 +532,7 @@ export default function App() {
 
   const handleJumpToNextUnanswered = () => {
     const nextId = findFirstUnansweredId(answers, ALL_QUESTIONS.length);
+    setPinnedQuestionId(null);
     setSelectedUnit('all');
     setSelectedDifficulty('all');
     setStatusFilter('todas');
@@ -406,11 +544,12 @@ export default function App() {
     return ALL_QUESTIONS.filter((q) => {
       if (selectedUnit !== 'all' && q.unitId !== selectedUnit) return false;
       if (selectedDifficulty !== 'all' && q.difficulty !== selectedDifficulty) return false;
+      if (q.id === pinnedQuestionId) return true;
       if (statusFilter === 'nao_respondidas' && answers[q.id]) return false;
       if (statusFilter === 'erradas' && (!answers[q.id] || answers[q.id] === q.correct)) return false;
       return true;
     });
-  }, [selectedUnit, selectedDifficulty, statusFilter, answers]);
+  }, [selectedUnit, selectedDifficulty, statusFilter, answers, pinnedQuestionId]);
 
   const currentQuestion = useMemo(() => {
     return (
@@ -428,6 +567,9 @@ export default function App() {
   const triStats = useMemo(() => calculateTriStats(ALL_QUESTIONS, answers), [answers]);
 
   const handleSelectAlternative = (key: AlternativeKey) => {
+    if (statusFilter !== 'todas') {
+      setPinnedQuestionId(currentQuestion.id);
+    }
     setAnswers((prev) => ({
       ...prev,
       [currentQuestion.id]: key,
@@ -435,6 +577,9 @@ export default function App() {
   };
 
   const handleRedoQuestion = () => {
+    if (statusFilter !== 'todas') {
+      setPinnedQuestionId(currentQuestion.id);
+    }
     setAnswers((prev) => {
       const next = { ...prev };
       delete next[currentQuestion.id];
@@ -444,12 +589,14 @@ export default function App() {
 
   const handleNext = () => {
     if (currentIndex < filteredQuestions.length - 1) {
+      setPinnedQuestionId(null);
       setCurrentQuestionId(filteredQuestions[currentIndex + 1].id);
     }
   };
 
   const handlePrev = () => {
     if (currentIndex > 0) {
+      setPinnedQuestionId(null);
       setCurrentQuestionId(filteredQuestions[currentIndex - 1].id);
     }
   };
@@ -457,21 +604,50 @@ export default function App() {
   const handleReset = () => {
     if (!confirmReset) {
       setConfirmReset(true);
-      setTimeout(() => setConfirmReset(false), 3500);
+      if (resetTimerRef.current !== null) {
+        window.clearTimeout(resetTimerRef.current);
+      }
+      resetTimerRef.current = window.setTimeout(() => {
+        setConfirmReset(false);
+        resetTimerRef.current = null;
+      }, 3500);
       return;
     }
+    if (resetTimerRef.current !== null) {
+      window.clearTimeout(resetTimerRef.current);
+      resetTimerRef.current = null;
+    }
+    setPinnedQuestionId(null);
     setAnswers({});
     setConfirmReset(false);
     setCurrentQuestionId(1);
   };
 
+  const handleDownloadPdf = () => {
+    try {
+      downloadQuestionsPdf(ALL_QUESTIONS);
+    } catch {
+      setResumeBanner('Não foi possível gerar o PDF neste momento. Tente novamente.');
+    }
+  };
+
+  const handleDownloadWord = async () => {
+    try {
+      await downloadQuestionsWord(ALL_QUESTIONS);
+    } catch {
+      setResumeBanner('Não foi possível gerar o documento Word neste momento. Tente novamente.');
+    }
+  };
+
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (activeTab !== 'simulado' || showAuthModal) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (
         e.target instanceof HTMLInputElement ||
         e.target instanceof HTMLSelectElement ||
-        e.target instanceof HTMLTextAreaElement
+        e.target instanceof HTMLTextAreaElement ||
+        (e.target instanceof HTMLElement && e.target.isContentEditable)
       ) {
         return;
       }
@@ -627,7 +803,11 @@ export default function App() {
         </div>
 
         {/* Mobile Nav */}
-        <div className="md:hidden border-t border-slate-100 px-4 py-2 flex items-center justify-around text-xs font-medium text-slate-600">
+        <div
+          className={`md:hidden border-t px-4 py-2 flex items-center justify-around text-xs font-medium text-slate-600 ${
+            isSepia ? 'border-amber-200' : 'border-slate-100'
+          }`}
+        >
           <button
             onClick={() => setActiveTab('simulado')}
             className={`px-2 py-1 ${activeTab === 'simulado' ? 'text-blue-700 font-semibold' : ''}`}
@@ -689,6 +869,7 @@ export default function App() {
                 </p>
                 <button
                   onClick={() => {
+                    setPinnedQuestionId(null);
                     setSelectedUnit('all');
                     setSelectedDifficulty('all');
                     setStatusFilter('todas');
@@ -817,7 +998,11 @@ export default function App() {
 
                           {/* Gabarito Comentado for every alternative when answered */}
                           {isAnswered && (showAllComments || isSelected || isCorrectAlt) && (
-                            <div className="mt-2.5 pt-2.5 border-t border-slate-200/80 text-xs sm:text-sm text-slate-600 leading-relaxed">
+                            <div
+                              className={`mt-2.5 pt-2.5 border-t text-xs sm:text-sm text-slate-600 leading-relaxed ${
+                                isDark ? 'border-zinc-600' : 'border-slate-200/80'
+                              }`}
+                            >
                               <span className="font-semibold text-slate-800">Comentário: </span>
                               {alt.comment}
                             </div>
@@ -969,14 +1154,14 @@ export default function App() {
                 </div>
                 <div className="grid grid-cols-2 gap-2.5">
                   <button
-                    onClick={() => downloadQuestionsPdf(ALL_QUESTIONS)}
+                    onClick={handleDownloadPdf}
                     className="inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg bg-blue-700 text-white hover:bg-blue-800 transition-colors cursor-pointer"
                   >
                     <FileDown className="w-3.5 h-3.5" />
                     Baixar PDF
                   </button>
                   <button
-                    onClick={() => downloadQuestionsWord(ALL_QUESTIONS)}
+                    onClick={handleDownloadWord}
                     className="inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg border border-slate-300 bg-white text-slate-800 hover:bg-slate-50 transition-colors cursor-pointer"
                   >
                     <FileDown className="w-3.5 h-3.5" />
@@ -996,7 +1181,10 @@ export default function App() {
                   <label className="block text-xs font-medium text-slate-600 mb-1">Unidade</label>
                   <select
                     value={selectedUnit}
-                    onChange={(e) => setSelectedUnit(e.target.value)}
+                    onChange={(e) => {
+                      setPinnedQuestionId(null);
+                      setSelectedUnit(e.target.value);
+                    }}
                     className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-800"
                   >
                     <option value="all">Todas as Unidades ({ALL_QUESTIONS.length})</option>
@@ -1015,9 +1203,10 @@ export default function App() {
                     </label>
                     <select
                       value={selectedDifficulty}
-                      onChange={(e) =>
-                        setSelectedDifficulty(e.target.value as Difficulty | 'all')
-                      }
+                      onChange={(e) => {
+                        setPinnedQuestionId(null);
+                        setSelectedDifficulty(e.target.value as Difficulty | 'all');
+                      }}
                       className="w-full text-sm border border-slate-200 rounded-lg px-2.5 py-2 bg-white text-slate-800"
                     >
                       <option value="all">Todos</option>
@@ -1031,7 +1220,10 @@ export default function App() {
                     <label className="block text-xs font-medium text-slate-600 mb-1">Status</label>
                     <select
                       value={statusFilter}
-                      onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+                      onChange={(e) => {
+                        setPinnedQuestionId(null);
+                        setStatusFilter(e.target.value as StatusFilter);
+                      }}
                       className="w-full text-sm border border-slate-200 rounded-lg px-2.5 py-2 bg-white text-slate-800"
                     >
                       <option value="todas">Todas</option>
@@ -1068,13 +1260,18 @@ export default function App() {
                             : 'bg-red-100 text-red-900 border-red-300';
                       }
                       if (isCurrent) {
-                        btnStyle += ' ring-2 ring-blue-700 ring-offset-1';
+                        btnStyle += isDark
+                          ? ' ring-2 ring-blue-400 ring-offset-1 ring-offset-zinc-800'
+                          : ' ring-2 ring-blue-700 ring-offset-1';
                       }
 
                       return (
                         <button
                           key={q.id}
-                          onClick={() => setCurrentQuestionId(q.id)}
+                          onClick={() => {
+                            setPinnedQuestionId(null);
+                            setCurrentQuestionId(q.id);
+                          }}
                           className={`h-8 text-xs font-mono font-medium rounded border transition-colors cursor-pointer tabular-nums ${btnStyle}`}
                         >
                           {q.id}
@@ -1133,6 +1330,7 @@ export default function App() {
 
                     <button
                       onClick={() => {
+                        setPinnedQuestionId(null);
                         setSelectedUnit(unit.id);
                         setSelectedDifficulty('all');
                         setStatusFilter('todas');
@@ -1240,14 +1438,14 @@ export default function App() {
                   {ALL_QUESTIONS.length} questões
                 </span>
                 <button
-                  onClick={() => downloadQuestionsPdf(ALL_QUESTIONS)}
+                  onClick={handleDownloadPdf}
                   className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-lg bg-blue-700 text-white hover:bg-blue-800 transition-colors cursor-pointer"
                 >
                   <FileDown className="w-3.5 h-3.5" />
                   Baixar PDF
                 </button>
                 <button
-                  onClick={() => downloadQuestionsWord(ALL_QUESTIONS)}
+                  onClick={handleDownloadWord}
                   className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-lg border border-slate-300 bg-white text-slate-800 hover:bg-slate-50 transition-colors cursor-pointer"
                 >
                   <FileDown className="w-3.5 h-3.5" />
@@ -1290,6 +1488,7 @@ export default function App() {
                       )}
                       <button
                         onClick={() => {
+                          setPinnedQuestionId(null);
                           setSelectedUnit('all');
                           setSelectedDifficulty('all');
                           setStatusFilter('todas');

@@ -114,3 +114,22 @@
   color: #ffffff;
   border-color: #52525b;
 }
+
+@media print {
+  body,
+  .theme-dark,
+  .theme-dark .bg-white,
+  .theme-dark .bg-slate-50,
+  .theme-dark .bg-slate-100 {
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+  }
+
+  .theme-dark .text-slate-900,
+  .theme-dark .text-slate-800,
+  .theme-dark .text-slate-700,
+  .theme-dark .text-slate-600,
+  .theme-dark .text-slate-500 {
+    color: #0f172a !important;
+  }
+}

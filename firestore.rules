@@ -10,6 +10,20 @@ service cloud.firestore {
       return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
+    function isValidAccountKey(id) {
+      return id is string && id.size() == 68 && id.matches('^acc_[a-f0-9]{64}$');
+    }
+
+    function isValidEmailUid(id) {
+      return id is string && id.size() >= 20 && id.size() <= 128 && id.matches('^email_[a-zA-Z0-9_\\-]+$');
+    }
+
+    function hasServerTag(data) {
+      return data.serverTag is string
+        && data.serverTag.size() == 48
+        && data.serverTag == 'fnm_srv_9f4b2c8e1d7a6035c8e2b91d4a7f6c30e5a1b8d2';
+    }
+
     function incoming() {
       return request.resource.data;
     }
@@ -101,6 +115,118 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidEmailAccount(data, accountKey) {
+      return data.keys().hasAll([
+          'accountKey',
+          'uid',
+          'email',
+          'displayName',
+          'passwordSalt',
+          'passwordHash',
+          'sessionHashes',
+          'resetCodeHash',
+          'resetExpiresAt',
+          'resetAttempts',
+          'serverTag',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'accountKey',
+          'uid',
+          'email',
+          'displayName',
+          'passwordSalt',
+          'passwordHash',
+          'sessionHashes',
+          'resetCodeHash',
+          'resetExpiresAt',
+          'resetAttempts',
+          'serverTag',
+          'createdAt',
+          'updatedAt'
+        ])
+        && isValidAccountKey(data.accountKey)
+        && data.accountKey == accountKey
+        && isValidEmailUid(data.uid)
+        && data.email is string
+        && data.email.size() >= 3
+        && data.email.size() <= 254
+        && data.displayName is string
+        && data.displayName.size() <= 120
+        && data.passwordSalt is string
+        && data.passwordSalt.size() >= 16
+        && data.passwordSalt.size() <= 128
+        && data.passwordHash is string
+        && data.passwordHash.size() >= 32
+        && data.passwordHash.size() <= 256
+        && data.sessionHashes is list
+        && data.sessionHashes.size() <= 10
+        && (data.sessionHashes.size() == 0 || data.sessionHashes[0] is string)
+        && data.resetCodeHash is string
+        && data.resetCodeHash.size() <= 128
+        && data.resetExpiresAt is int
+        && data.resetExpiresAt >= 0
+        && data.resetAttempts is int
+        && data.resetAttempts >= 0
+        && data.resetAttempts <= 10
+        && hasServerTag(data)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidEmailProgress(data, progressUid) {
+      return data.keys().hasAll([
+          'ownerId',
+          'answers',
+          'currentQuestionId',
+          'selectedUnit',
+          'selectedDifficulty',
+          'statusFilter',
+          'pageTheme',
+          'serverTag',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId',
+          'answers',
+          'currentQuestionId',
+          'selectedUnit',
+          'selectedDifficulty',
+          'statusFilter',
+          'pageTheme',
+          'serverTag',
+          'createdAt',
+          'updatedAt'
+        ])
+        && isValidEmailUid(data.ownerId)
+        && data.ownerId == progressUid
+        && data.answers is map
+        && data.answers.size() <= 500
+        && data.currentQuestionId is int
+        && data.currentQuestionId >= 1
+        && data.currentQuestionId <= 500
+        && data.selectedUnit is string
+        && data.selectedUnit.size() >= 1
+        && data.selectedUnit.size() <= 32
+        && data.selectedDifficulty is string
+        && data.selectedDifficulty.size() >= 1
+        && data.selectedDifficulty.size() <= 16
+        && data.selectedDifficulty in ['all', 'Fácil', 'Médio', 'Difícil']
+        && data.statusFilter is string
+        && data.statusFilter.size() >= 1
+        && data.statusFilter.size() <= 32
+        && data.statusFilter in ['todas', 'nao_respondidas', 'erradas']
+        && data.pageTheme is string
+        && data.pageTheme.size() >= 1
+        && data.pageTheme.size() <= 16
+        && data.pageTheme in ['claro', 'sepia', 'escuro']
+        && hasServerTag(data)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
     match /users/{userId}/private/{docId} {
       allow get: if isValidId(userId) && isValidId(docId) && docId == 'profile' && isOwner(userId);
       allow list: if false;
@@ -158,6 +284,61 @@ service cloud.firestore {
         && isValidId(progressId)
         && progressId == 'simulado'
         && isVerifiedOwner(userId);
+    }
+
+    match /emailAccounts/{accountKey} {
+      allow get: if isValidAccountKey(accountKey);
+      allow list: if false;
+      allow create: if isValidAccountKey(accountKey)
+        && isValidEmailAccount(incoming(), accountKey)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidAccountKey(accountKey)
+        && isValidEmailAccount(incoming(), accountKey)
+        && (
+          incoming().accountKey == existing().accountKey
+          && incoming().uid == existing().uid
+          && incoming().email == existing().email
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'displayName',
+            'passwordSalt',
+            'passwordHash',
+            'sessionHashes',
+            'resetCodeHash',
+            'resetExpiresAt',
+            'resetAttempts',
+            'updatedAt'
+          ])
+        );
+      allow delete: if false;
+    }
+
+    match /emailProgress/{progressUid} {
+      allow get: if isValidEmailUid(progressUid);
+      allow list: if false;
+      allow create: if isValidEmailUid(progressUid)
+        && isValidEmailProgress(incoming(), progressUid)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidEmailUid(progressUid)
+        && isValidEmailProgress(incoming(), progressUid)
+        && (
+          incoming().ownerId == existing().ownerId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'answers',
+            'currentQuestionId',
+            'selectedUnit',
+            'selectedDifficulty',
+            'statusFilter',
+            'pageTheme',
+            'updatedAt'
+          ])
+        );
+      allow delete: if false;
     }
   }
 }

@@ -115,6 +115,12 @@ export function translateAuthError(error: unknown): string {
   if (code === 'auth/requires-recent-login') {
     return 'Por segurança, entre novamente na sua conta para concluir esta operação.';
   }
+  if (code === 'auth/account-exists-with-different-credential') {
+    return 'Já existe uma conta vinculada a este e-mail com outro método de acesso.';
+  }
+  if (code === 'auth/internal-error' || code === 'auth/invalid-api-key') {
+    return 'Erro de configuração na autenticação. Tente novamente em instantes.';
+  }
 
   return 'Não foi possível concluir o login. Verifique seu e-mail e tente novamente.';
 }

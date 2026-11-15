@@ -2,7 +2,7 @@
   "entities": {
     "PrivateUserProfile": {
       "title": "PrivateUserProfile",
-      "description": "Dados privados de identificação do estudante autenticado (isolados por proprietário).",
+      "description": "Dados privados de identificação do estudante autenticado via Google (isolados por proprietário).",
       "type": "object",
       "properties": {
         "ownerId": {
@@ -107,16 +107,196 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "EmailAccount": {
+      "title": "EmailAccount",
+      "description": "Conta persistente de login por E-mail e Senha armazenada no Firestore.",
+      "type": "object",
+      "properties": {
+        "accountKey": {
+          "type": "string",
+          "minLength": 68,
+          "maxLength": 68,
+          "pattern": "^acc_[a-f0-9]{64}$",
+          "description": "Identificador HMAC-SHA256 determinístico da conta."
+        },
+        "uid": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 128,
+          "pattern": "^email_[a-zA-Z0-9_\\-]+$",
+          "description": "UID único da conta por e-mail."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "minLength": 3,
+          "maxLength": 254,
+          "description": "E-mail cadastrado."
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 120,
+          "description": "Nome do estudante."
+        },
+        "passwordSalt": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "description": "Salt criptográfico da senha."
+        },
+        "passwordHash": {
+          "type": "string",
+          "minLength": 32,
+          "maxLength": 256,
+          "description": "Hash scrypt da senha."
+        },
+        "sessionHashes": {
+          "type": "array",
+          "description": "Hashes SHA-256 de tokens de sessão ativos."
+        },
+        "resetCodeHash": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 128,
+          "description": "Hash HMAC do código de recuperação de senha."
+        },
+        "resetExpiresAt": {
+          "type": "integer",
+          "description": "Timestamp em milissegundos da expiração do código."
+        },
+        "resetAttempts": {
+          "type": "integer",
+          "description": "Contagem de tentativas inválidas de recuperação."
+        },
+        "serverTag": {
+          "type": "string",
+          "minLength": 48,
+          "maxLength": 48,
+          "description": "Assinatura interna do backend."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Data de criação da conta."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Data da última atualização."
+        }
+      },
+      "required": [
+        "accountKey",
+        "uid",
+        "email",
+        "displayName",
+        "passwordSalt",
+        "passwordHash",
+        "sessionHashes",
+        "resetCodeHash",
+        "resetExpiresAt",
+        "resetAttempts",
+        "serverTag",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "EmailProgress": {
+      "title": "EmailProgress",
+      "description": "Progresso persistente no Firestore para contas autenticadas por E-mail e Senha.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 128,
+          "pattern": "^email_[a-zA-Z0-9_\\-]+$",
+          "description": "UID da conta por e-mail."
+        },
+        "answers": {
+          "type": "object",
+          "description": "Mapa de respostas no formato { questionId: 'A' | 'B' | 'C' | 'D' | 'E' }."
+        },
+        "currentQuestionId": {
+          "type": "integer",
+          "description": "ID (1 a 500) da questão em que o estudante parou."
+        },
+        "selectedUnit": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "description": "Filtro de unidade selecionado."
+        },
+        "selectedDifficulty": {
+          "type": "string",
+          "enum": ["all", "Fácil", "Médio", "Difícil"],
+          "minLength": 1,
+          "maxLength": 16,
+          "description": "Filtro de nível TRI selecionado."
+        },
+        "statusFilter": {
+          "type": "string",
+          "enum": ["todas", "nao_respondidas", "erradas"],
+          "minLength": 1,
+          "maxLength": 32,
+          "description": "Filtro de status selecionado."
+        },
+        "pageTheme": {
+          "type": "string",
+          "enum": ["claro", "sepia", "escuro"],
+          "minLength": 1,
+          "maxLength": 16,
+          "description": "Tema visual preferido."
+        },
+        "serverTag": {
+          "type": "string",
+          "minLength": 48,
+          "maxLength": 48,
+          "description": "Assinatura interna do backend."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp de criação."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp da última sincronização."
+        }
+      },
+      "required": [
+        "ownerId",
+        "answers",
+        "currentQuestionId",
+        "selectedUnit",
+        "selectedDifficulty",
+        "statusFilter",
+        "pageTheme",
+        "serverTag",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
     "/users/{userId}/private/{docId}": {
       "schema": { "$ref": "#/entities/PrivateUserProfile" },
-      "description": "Perfil privado isolado do usuário autenticado (docId: 'profile')."
+      "description": "Perfil privado isolado do usuário autenticado via Google (docId: 'profile')."
     },
     "/users/{userId}/progress/{progressId}": {
       "schema": { "$ref": "#/entities/SimuladoProgress" },
-      "description": "Progresso de respostas e ponto de retomada do estudante (progressId: 'simulado')."
+      "description": "Progresso de respostas e ponto de retomada do estudante Google (progressId: 'simulado')."
+    },
+    "/emailAccounts/{accountKey}": {
+      "schema": { "$ref": "#/entities/EmailAccount" },
+      "description": "Contas persistentes por E-mail e Senha no banco de dados online."
+    },
+    "/emailProgress/{progressUid}": {
+      "schema": { "$ref": "#/entities/EmailProgress" },
+      "description": "Progresso persistente no banco de dados online para contas por E-mail e Senha."
     }
   }
 }

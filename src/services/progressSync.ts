@@ -36,6 +36,13 @@ export type AppAccount = EmailAccount | GoogleAccount;
 
 export const EMAIL_TOKEN_STORAGE_KEY = 'filoenem_email_token_v1';
 
+export class SessionExpiredError extends Error {
+  constructor(message = 'Sessão expirada. Entre novamente com seu e-mail.') {
+    super(message);
+    this.name = 'SessionExpiredError';
+  }
+}
+
 const VALID_KEYS = new Set<AlternativeKey>(['A', 'B', 'C', 'D', 'E']);
 const VALID_UNITS = new Set<string>(['all', ...CURRICULUM.map((u) => u.id)]);
 const VALID_DIFFS = new Set<string>(['all', 'Fácil', 'Médio', 'Difícil']);
@@ -164,8 +171,11 @@ export async function loadAccountProgress(
         Authorization: `Bearer ${account.token}`,
       },
     });
+    if (res.status === 401) {
+      throw new SessionExpiredError();
+    }
     if (!res.ok) {
-      return { exists: false, state: null };
+      throw new Error('Falha ao carregar progresso do servidor.');
     }
     const data = (await res.json()) as {
       exists?: boolean;
@@ -217,6 +227,9 @@ export async function saveAccountProgress(
       },
       body: JSON.stringify(clean),
     });
+    if (res.status === 401) {
+      throw new SessionExpiredError();
+    }
     if (!res.ok) {
       throw new Error('Falha ao salvar progresso no servidor.');
     }
@@ -268,6 +281,31 @@ export async function saveAccountProgress(
     });
     return true;
   } catch (error) {
+    const code =
+      typeof error === 'object' && error !== null && 'code' in error
+        ? String((error as { code?: unknown }).code || '').toLowerCase()
+        : '';
+    if (exists && code.includes('not-found')) {
+      try {
+        await setDoc(ref, {
+          ownerId: user.uid,
+          answers: clean.answers,
+          currentQuestionId: clean.currentQuestionId,
+          selectedUnit: clean.selectedUnit,
+          selectedDifficulty: clean.selectedDifficulty,
+          statusFilter: clean.statusFilter,
+          pageTheme: clean.pageTheme,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+        return true;
+      } catch (createErr) {
+        if (isPermissionError(createErr)) {
+          handleFirestoreError(createErr, OperationType.CREATE, path);
+        }
+        throw createErr;
+      }
+    }
     if (isPermissionError(error)) {
       handleFirestoreError(error, exists ? OperationType.UPDATE : OperationType.CREATE, path);
     }
